@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
-from .locks import FileLock
+from .locks import ops_lock
 
 DEFAULTS: dict[str, Any] = {
     "version": 1,
@@ -34,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
 class StateStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self._lock = FileLock(self.path.with_name(self.path.name + ".lock"))
+        self._lock = ops_lock(self.path.with_name(self.path.name + ".lock"))
 
     def read(self) -> dict:
         try:

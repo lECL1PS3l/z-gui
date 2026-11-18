@@ -8,7 +8,7 @@ from pathlib import Path
 from .. import paths
 from ..logs import get_logger
 from . import batparse, gamefilter, payload, procs, strategies
-from .locks import FileLock
+from .locks import ops_lock
 from .state import StateStore
 
 SRVC = "zapret"
@@ -86,7 +86,7 @@ class Zapret:
     ) -> None:
         self.root = Path(root) if root else paths.zapret_dir()
         self.store = store or StateStore(paths.state_path())
-        self._lock = FileLock(lock_path or paths.ops_lock_path())
+        self._lock = ops_lock(lock_path or paths.ops_lock_path())
 
     @property
     def winws(self) -> Path:

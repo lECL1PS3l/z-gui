@@ -63,6 +63,7 @@ class Bridge:
         self._stop: asyncio.Event | None = None
         self._started = False
         self._error: str | None = None
+        self._lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -135,43 +136,45 @@ class Bridge:
                 pass
 
     def start(self, port: int, secret: str, timeout: float = 25.0) -> None:
-        if self.running:
-            return
-        self._error = None
-        self._started = False
-        self.port = int(port)
-        self.secret = secret
-        self._configure_logging()
-        self._thread = threading.Thread(
-            target=self._main, args=(port, secret), name="tg-bridge", daemon=True
-        )
-        self._thread.start()
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self._error:
-                raise BridgeError(self._error)
-            if self._started and tcp_ready(self.port):
+        with self._lock:
+            if self.running:
                 return
-            if not self._thread.is_alive():
-                raise BridgeError(self._error or "мост остановился")
-            time.sleep(0.1)
-        raise BridgeError("мост не отвечает")
+            self._error = None
+            self._started = False
+            self.port = int(port)
+            self.secret = secret
+            self._configure_logging()
+            self._thread = threading.Thread(
+                target=self._main, args=(port, secret), name="tg-bridge", daemon=True
+            )
+            self._thread.start()
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if self._error:
+                    raise BridgeError(self._error)
+                if self._started and tcp_ready(self.port):
+                    return
+                if not self._thread.is_alive():
+                    raise BridgeError(self._error or "мост остановился")
+                time.sleep(0.1)
+            raise BridgeError("мост не отвечает")
 
     def stop(self, timeout: float = 6.0) -> None:
-        loop = self._loop
-        stop_event = self._stop
-        if loop is not None and stop_event is not None:
-            try:
-                loop.call_soon_threadsafe(stop_event.set)
-            except RuntimeError:
-                pass
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout)
-        self._thread = None
-        self._loop = None
-        self._stop = None
-        self._started = False
+        with self._lock:
+            loop = self._loop
+            stop_event = self._stop
+            if loop is not None and stop_event is not None:
+                try:
+                    loop.call_soon_threadsafe(stop_event.set)
+                except RuntimeError:
+                    pass
+            thread = self._thread
+            if thread is not None:
+                thread.join(timeout)
+            self._thread = None
+            self._loop = None
+            self._stop = None
+            self._started = False
 
 
 def smoke(path: str) -> int:

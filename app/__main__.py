@@ -6,17 +6,19 @@ import time
 from . import ipc
 
 
-def _ensure_tray(timeout: float = 25.0) -> bool:
+def _ensure_tray(timeout: float = 0.0) -> bool:
     from .command import spawn
 
     if ipc.ping():
         return True
     spawn("--tray")
+    if timeout <= 0:
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if ipc.ping(timeout=1.0):
+        if ipc.ping(timeout=0.5):
             return True
-        time.sleep(0.3)
+        time.sleep(0.1)
     return False
 
 

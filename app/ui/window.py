@@ -8,7 +8,6 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
 
 from .. import paths, winapi
-from ..core import bootstrap
 from ..core.locks import FileLock
 from ..core.state import StateStore
 from ..logs import get_logger
@@ -43,7 +42,6 @@ def _run(demo: bool = False) -> int:
     if demo:
         backend = DemoBackend()
     else:
-        bootstrap.ensure_ready()
         store = StateStore(paths.state_path())
         backend = Backend(store)
     engine = QQmlApplicationEngine()

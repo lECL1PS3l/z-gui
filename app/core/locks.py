@@ -15,50 +15,57 @@ class FileLock:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self._handle = None
-        self._thread_lock = threading.RLock()
-        self._depth = 0
+        self._guard = threading.Lock()
+        self._local = threading.local()
+
+    def _depth(self) -> int:
+        return int(getattr(self._local, "depth", 0))
 
     def acquire(self, timeout: float = 30.0) -> bool:
-        self._thread_lock.acquire()
-        if self._depth > 0:
-            self._depth += 1
-            self._thread_lock.release()
+        if self._depth() > 0:
+            self._local.depth = self._depth() + 1
             return True
         deadline = time.monotonic() + max(timeout, 0.0)
         while True:
-            try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                handle = open(self.path, "a+b")
-            except OSError:
-                self._thread_lock.release()
-                return False
-            try:
-                handle.seek(0)
-                if msvcrt is None:
-                    self._handle = handle
-                    self._depth = 1
-                    self._thread_lock.release()
-                    return True
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                self._handle = handle
-                self._depth = 1
-                self._thread_lock.release()
+            acquired = False
+            with self._guard:
+                if self._handle is None:
+                    handle = None
+                    try:
+                        self.path.parent.mkdir(parents=True, exist_ok=True)
+                        handle = open(self.path, "a+b")
+                    except OSError:
+                        handle = None
+                    if handle is not None:
+                        try:
+                            handle.seek(0)
+                            if msvcrt is not None:
+                                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                            self._handle = handle
+                            acquired = True
+                        except OSError:
+                            handle.close()
+                            handle = None
+            if acquired:
+                self._local.depth = 1
                 return True
-            except OSError:
-                handle.close()
-                if time.monotonic() >= deadline:
-                    self._thread_lock.release()
-                    return False
-                time.sleep(0.05)
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def release(self) -> None:
-        self._thread_lock.acquire()
-        try:
-            self._depth -= 1
-            if self._depth > 0 or self._handle is None:
-                return
+        depth = self._depth()
+        if depth <= 0:
+            return
+        if depth > 1:
+            self._local.depth = depth - 1
+            return
+        self._local.depth = 0
+        with self._guard:
             handle = self._handle
             self._handle = None
+            if handle is None:
+                return
             try:
                 handle.seek(0)
                 if msvcrt is not None:
@@ -67,8 +74,6 @@ class FileLock:
                 pass
             finally:
                 handle.close()
-        finally:
-            self._thread_lock.release()
 
     def __enter__(self) -> "FileLock":
         if not self.acquire():
@@ -89,7 +94,7 @@ _locks_guard = threading.Lock()
 
 
 def ops_lock(path: Path) -> FileLock:
-    key = os.path.abspath(str(path))
+    key = os.path.normcase(os.path.abspath(str(path)))
     with _locks_guard:
         lock = _locks.get(key)
         if lock is None:

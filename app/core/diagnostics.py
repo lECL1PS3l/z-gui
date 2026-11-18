@@ -88,6 +88,14 @@ def _doh_configured() -> bool:
     return False
 
 
+def _owned_by_zapret(name: str, root: Path) -> bool:
+    query = procs.run(["sc.exe", "qc", name], timeout=10)
+    if query.code != 0:
+        return False
+    marker = str(Path(root)).replace("/", "\\").lower()
+    return marker in query.text.replace("/", "\\").lower()
+
+
 def collect(root: Path | None = None) -> list[Finding]:
     target = Path(root) if root else paths.zapret_dir()
     findings: list[Finding] = []
@@ -125,14 +133,23 @@ def collect(root: Path | None = None) -> list[Finding]:
     if not procs.winws_running():
         windivert = procs.run(["sc.exe", "query", "WinDivert"], timeout=10)
         if "RUNNING" in windivert.text:
-            findings.append(
-                Finding(
-                    "windivert_orphan",
-                    "error",
-                    "Драйвер занят другим процессом",
-                    "clean_windivert",
+            if _owned_by_zapret("WinDivert", target):
+                findings.append(
+                    Finding(
+                        "windivert_orphan",
+                        "error",
+                        "Драйвер занят другим процессом",
+                        "clean_windivert",
+                    )
                 )
-            )
+            else:
+                findings.append(
+                    Finding(
+                        "windivert_busy",
+                        "warning",
+                        "Драйвер WinDivert занят другой программой",
+                    )
+                )
     conflicts = [
         name
         for name in ("goodbyedpi", "discordfix_zapret", "winws1", "winws2")
@@ -173,6 +190,8 @@ def apply_fix(code: str) -> bool:
             return False
         ok = True
         for name in ("WinDivert", "WinDivert14"):
+            if not _owned_by_zapret(name, paths.zapret_dir()):
+                continue
             procs.run(["sc.exe", "stop", name], timeout=15)
             result = procs.run(["sc.exe", "delete", name], timeout=15)
             ok = ok and (result.code == 0 or "1060" in result.text)

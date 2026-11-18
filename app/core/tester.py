@@ -263,7 +263,7 @@ class Tester:
                 ],
                 timeout=5,
             )
-            if result.code == 0 and re.match(r"^\d{3}$", result.out.strip()):
+            if result.code == 0 and re.match(r"^[1-5]\d{2}$", result.out.strip()):
                 good += 1
         return {"ok": good, "total": len(urls)}
 
@@ -276,7 +276,7 @@ class Tester:
         previous = data.get("strategy")
         previous_results = data.get("results") or []
         previous_baseline = data.get("baseline")
-        baseline: dict = {}
+        baseline: dict = previous_baseline or {}
         results: list[dict] = previous_results
         cancelled = False
         restored = False

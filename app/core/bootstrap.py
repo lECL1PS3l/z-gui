@@ -6,7 +6,7 @@ from .. import __version__, paths
 from ..logs import get_logger
 from . import ipset, payload, versions
 from . import zapret as zapret_mod
-from .locks import FileLock
+from .locks import ops_lock
 from .state import StateStore
 
 log = get_logger("z-gui.bootstrap")
@@ -22,14 +22,23 @@ def ensure_ready() -> dict:
     source = paths.bundled_payload_dir()
     manifest = payload.read_manifest(paths.payload_dir())
     if source.is_dir():
-        manifest = payload.sync_payload(source, paths.payload_dir())
+        with ops_lock(paths.ops_lock_path()):
+            manifest = payload.sync_payload(source, paths.payload_dir())
     data = store.read()
     now = datetime.now().replace(microsecond=0).isoformat()
-    changes: dict = {"app_version": __version__}
+    changes: dict = {}
+    if data.get("app_version") != __version__:
+        changes["app_version"] = __version__
     proxy_version = manifest.get("proxy", {}).get("version")
-    if proxy_version and not data.get("proxy_version"):
+    proxy_date = manifest.get("proxy", {}).get("published_at")
+    if proxy_version and versions.is_newer(
+        proxy_version,
+        proxy_date,
+        data.get("proxy_version"),
+        data.get("proxy_published_at"),
+    ):
         changes["proxy_version"] = proxy_version
-        changes["proxy_published_at"] = manifest.get("proxy", {}).get("published_at")
+        changes["proxy_published_at"] = proxy_date
     zapret_version = manifest.get("zapret", {}).get("version")
     zapret_date = manifest.get("zapret", {}).get("published_at")
     installed = data.get("zapret_version")
@@ -43,7 +52,7 @@ def ensure_ready() -> dict:
     if zapret_version and needs:
         archive = paths.payload_dir() / "zapret.zip"
         if archive.exists():
-            with FileLock(paths.ops_lock_path()):
+            with ops_lock(paths.ops_lock_path()):
                 current = store.read()
                 installed_current = current.get("zapret_version")
                 still = (

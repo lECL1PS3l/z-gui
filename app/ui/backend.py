@@ -10,7 +10,7 @@ from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 
 from .. import __version__, command, ipc, paths
 from ..core import apply as apply_mod
-from ..core import autostart, diagnostics, payload, reconcile, updater, versions
+from ..core import autostart, bootstrap, diagnostics, payload, reconcile, updater, versions
 from ..core import strategies as strategies_mod
 from ..core.state import StateStore
 from ..core.tester import Tester
@@ -183,9 +183,14 @@ class Backend(QObject):
 
     def _boot(self) -> None:
         try:
+            bootstrap.ensure_ready()
+        except Exception as exc:
+            log.warning("подготовка не удалась: %s", exc)
+        try:
             reconcile.sync_state(self.store, self.zapret)
         except Exception:
             pass
+        self._post(self._refresh)
         data = self.store.read()
         pending = data.get("pending_update")
         if pending:
@@ -361,7 +366,13 @@ class Backend(QObject):
 
     @Slot()
     def startTest(self) -> None:
-        if self._busy or self._phase == "test" or self._update_busy:
+        if (
+            self._busy
+            or self._zapret_busy
+            or self._apply_busy
+            or self._phase == "test"
+            or self._update_busy
+        ):
             return
         if not payload.validate_tree(paths.zapret_dir()):
             self._fail("Не удалось запустить Zapret", "файлы Zapret не найдены")
@@ -405,7 +416,6 @@ class Backend(QObject):
     def _test_finished(self, result: dict) -> None:
         self._phase = "idle"
         if result.get("cancelled"):
-            self._selected = 0
             self._error = None
             self._refresh()
             return
@@ -444,7 +454,13 @@ class Backend(QObject):
 
     @Slot()
     def applyStrategy(self) -> None:
-        if self._busy or self._update_busy or self._apply_busy or self._phase != "idle":
+        if (
+            self._busy
+            or self._zapret_busy
+            or self._update_busy
+            or self._apply_busy
+            or self._phase != "idle"
+        ):
             return
         data = self.store.read()
         results = data.get("results") or []
@@ -655,6 +671,8 @@ class Backend(QObject):
         cancel = self._cancel
         if cancel is not None:
             cancel.set()
-            deadline = time.monotonic() + 20
-            while self._busy and time.monotonic() < deadline:
-                time.sleep(0.1)
+        deadline = time.monotonic() + 20
+        while (
+            self._busy or self._zapret_busy or self._apply_busy or self._update_busy
+        ) and time.monotonic() < deadline:
+            time.sleep(0.1)

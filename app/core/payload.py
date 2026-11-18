@@ -40,6 +40,8 @@ def _safe_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
         parts = [part for part in name.split("/") if part]
         if name.startswith("/") or ".." in parts:
             raise PayloadError("небезопасный путь в архиве")
+        if parts and (":" in parts[0] or Path(name).is_absolute()):
+            raise PayloadError("небезопасный путь в архиве")
         members.append(info)
     return members
 

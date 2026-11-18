@@ -28,20 +28,13 @@ class TrayApp:
         self.icon = None
         self._handle = None
         self._stop = threading.Event()
+        self._bridge_lock = threading.Lock()
 
     def run(self) -> int:
         self._handle = winapi.single_instance(MUTEX_NAME)
         if self._handle is None:
             return 0
         paths.ensure_dirs()
-        data = bootstrap.ensure_ready()
-        reconcile.sync_state(self.store, self.zapret)
-        autostart.sync(bool(data.get("autostart")))
-        if data.get("bridge_enabled"):
-            try:
-                self.start_bridge()
-            except Exception:
-                log.warning("мост не запустился")
         self.server = ipc.Server(
             paths.ipc_path(),
             {
@@ -54,10 +47,31 @@ class TrayApp:
             },
         )
         self.server.start()
-        threading.Thread(target=self._scheduler, name="zgui-scheduler", daemon=True).start()
+        threading.Thread(target=self._init, name="zgui-init", daemon=True).start()
         self._run_icon()
         self.shutdown()
         return 0
+
+    def _init(self) -> None:
+        try:
+            data = bootstrap.ensure_ready()
+        except Exception as exc:
+            log.warning("подготовка не удалась: %s", exc)
+            data = self.store.read()
+        try:
+            reconcile.sync_state(self.store, self.zapret)
+        except Exception as exc:
+            log.warning("сверка не удалась: %s", exc)
+        try:
+            autostart.sync(bool(data.get("autostart")))
+        except Exception as exc:
+            log.warning("автозапуск не обновлён: %s", exc)
+        if data.get("bridge_enabled"):
+            try:
+                self.start_bridge()
+            except Exception:
+                log.warning("мост не запустился")
+        threading.Thread(target=self._scheduler, name="zgui-scheduler", daemon=True).start()
 
     def _async(self, function) -> dict:
         threading.Thread(target=function, daemon=True).start()
@@ -88,18 +102,20 @@ class TrayApp:
         }
 
     def _bridge_stop(self) -> dict:
-        self.bridge.stop()
-        self.store.set(bridge_enabled=False)
+        with self._bridge_lock:
+            self.bridge.stop()
+            self.store.set(bridge_enabled=False)
         return {"ok": True}
 
     def start_bridge(self) -> None:
-        if self.bridge.running:
-            return
-        data = self.store.read()
-        port = bridge_mod.pick_port(int(data.get("proxy_port") or 1443))
-        secret = self.store.ensure_secret()
-        self.bridge.start(port, secret)
-        self.store.set(bridge_enabled=True, proxy_port=port)
+        with self._bridge_lock:
+            if self.bridge.running:
+                return
+            data = self.store.read()
+            port = bridge_mod.pick_port(int(data.get("proxy_port") or 1443))
+            secret = self.store.ensure_secret()
+            self.bridge.start(port, secret)
+            self.store.set(bridge_enabled=True, proxy_port=port)
 
     def _state(self) -> dict:
         data = self.store.read()
@@ -172,12 +188,14 @@ class TrayApp:
         self.icon.run()
 
     def _session_end(self) -> int:
-        self.bridge.stop(3.0)
+        with self._bridge_lock:
+            self.bridge.stop(3.0)
         return 1
 
     def shutdown(self) -> None:
         self._stop.set()
-        self.bridge.stop()
+        with self._bridge_lock:
+            self.bridge.stop()
         if self.server is not None:
             self.server.stop()
             self.server = None

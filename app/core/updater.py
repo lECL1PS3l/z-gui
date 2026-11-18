@@ -9,12 +9,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import paths
+from .. import __version__, paths
 from ..logs import get_logger
 from . import ipset, payload, procs, versions
 
 ZAPRET_REPO = "Flowseal/zapret-discord-youtube"
 PROXY_REPO = "Flowseal/tg-ws-proxy"
+APP_REPO = "lECL1PS3l/z-gui"
 API = "https://api.github.com"
 
 log = get_logger("z-gui.updater")
@@ -43,41 +44,63 @@ def _get_json(url: str) -> dict:
     return data
 
 
+def _release(repo: str) -> dict:
+    return _get_json(f"{API}/repos/{repo}/releases/latest")
+
+
 def latest() -> dict:
-    zapret_release = _get_json(f"{API}/repos/{ZAPRET_REPO}/releases/latest")
-    proxy_release = _get_json(f"{API}/repos/{PROXY_REPO}/releases/latest")
-    asset = next(
-        (
-            item
-            for item in zapret_release.get("assets", [])
-            if str(item.get("name", "")).lower().endswith(".zip")
-        ),
-        None,
-    )
-    if asset is None:
-        raise UpdateError("в релизе Zapret нет zip-архива")
-    digest = str(asset.get("digest") or "")
-    sha256 = digest.split(":", 1)[-1] if digest else ""
-    proxy_tag = str(proxy_release.get("tag_name") or "")
-    return {
-        "zapret": {
-            "version": str(zapret_release.get("tag_name") or ""),
-            "published_at": zapret_release.get("published_at"),
+    result: dict = {"zapret": None, "proxy": None, "app": None}
+    errors: list[str] = []
+    try:
+        release = _release(ZAPRET_REPO)
+        asset = next(
+            (
+                item
+                for item in release.get("assets", [])
+                if str(item.get("name", "")).lower().endswith(".zip")
+            ),
+            None,
+        )
+        if asset is None:
+            raise UpdateError("в релизе Zapret нет zip-архива")
+        digest = str(asset.get("digest") or "")
+        result["zapret"] = {
+            "version": str(release.get("tag_name") or ""),
+            "published_at": release.get("published_at"),
             "url": asset.get("browser_download_url"),
-            "sha256": sha256,
+            "sha256": digest.split(":", 1)[-1] if digest else "",
             "size": asset.get("size"),
-        },
-        "proxy": {
-            "version": proxy_tag.lstrip("v"),
-            "published_at": proxy_release.get("published_at"),
-            "url": f"{API}/repos/{PROXY_REPO}/zipball/{proxy_tag}",
-        },
-    }
+        }
+    except Exception as exc:
+        errors.append(f"zapret: {exc}")
+    try:
+        release = _release(PROXY_REPO)
+        tag = str(release.get("tag_name") or "")
+        result["proxy"] = {
+            "version": tag.lstrip("v"),
+            "published_at": release.get("published_at"),
+            "url": f"{API}/repos/{PROXY_REPO}/zipball/{tag}",
+        }
+    except Exception as exc:
+        errors.append(f"мост: {exc}")
+    try:
+        release = _release(APP_REPO)
+        result["app"] = {
+            "version": str(release.get("tag_name") or "").lstrip("v"),
+            "published_at": release.get("published_at"),
+            "url": release.get("html_url"),
+        }
+    except Exception as exc:
+        errors.append(f"программа: {exc}")
+    if not any(result.values()):
+        raise UpdateError("; ".join(errors) or "нет данных")
+    return result
 
 
 def build_offer(state: dict, remote: dict) -> dict | None:
     zapret = remote.get("zapret")
     proxy = remote.get("proxy")
+    app = remote.get("app")
     zapret_new = bool(
         zapret
         and versions.is_newer(
@@ -96,14 +119,29 @@ def build_offer(state: dict, remote: dict) -> dict | None:
             state.get("proxy_published_at"),
         )
     )
-    if not zapret_new and not proxy_new:
+    app_new = bool(
+        app
+        and versions.is_newer(
+            app.get("version"),
+            app.get("published_at"),
+            __version__,
+            None,
+        )
+    )
+    if not (zapret_new or proxy_new or app_new):
         return None
-    label = zapret["version"] if zapret_new else proxy["version"]
+    if app_new:
+        label = app["version"]
+    elif zapret_new:
+        label = zapret["version"]
+    else:
+        label = proxy["version"]
     return {
         "found_at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
         "label": label,
         "zapret": zapret if zapret_new else None,
         "proxy": proxy if proxy_new else None,
+        "app": app if app_new else None,
     }
 
 
@@ -192,6 +230,19 @@ def apply_offer(
     start_bridge=None,
     progress=None,
 ) -> None:
+    app = offer.get("app")
+    if app and app.get("url"):
+        try:
+            os.startfile(app["url"])
+        except OSError:
+            log.warning("не удалось открыть страницу релиза")
+    if not offer.get("zapret") and not offer.get("proxy"):
+        now = _now()
+        store.update(
+            lambda values: values.update({"last_check": now, "pending_update": None})
+        )
+        log.info("обновление программы: %s", offer.get("label"))
+        return
     temp = paths.temp_dir() / "update"
     shutil.rmtree(temp, ignore_errors=True)
     temp.mkdir(parents=True, exist_ok=True)

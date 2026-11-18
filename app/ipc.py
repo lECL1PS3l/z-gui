@@ -122,8 +122,9 @@ def call(
     timeout: float = 4.0,
     path: Path | None = None,
 ) -> dict | None:
-    endpoint = read_endpoint(path) if path is not None else None
-    if endpoint is None:
+    if path is not None:
+        endpoint = read_endpoint(path)
+    else:
         from . import paths
 
         endpoint = read_endpoint(paths.ipc_path())
