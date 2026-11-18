@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 
 from .. import __version__, command, ipc, paths
 from ..core import apply as apply_mod
-from ..core import autostart, bootstrap, diagnostics, payload, reconcile, updater, versions
+from ..core import autostart, bootstrap, diagnostics, payload, procs, reconcile, updater, versions
 from ..core import strategies as strategies_mod
 from ..core.state import StateStore
 from ..core.tester import Tester
@@ -182,6 +184,11 @@ class Backend(QObject):
             time.sleep(3)
 
     def _boot(self) -> None:
+        try:
+            procs.foreign_apps(Path(sys.executable))
+            procs.foreign_winws(paths.zapret_dir() / "bin" / "winws.exe")
+        except Exception as exc:
+            log.warning("очистка процессов: %s", exc)
         try:
             bootstrap.ensure_ready()
         except Exception as exc:

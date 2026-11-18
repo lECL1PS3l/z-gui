@@ -184,12 +184,15 @@ def _download(url: str, dest: Path, expected: str = "", progress=None) -> None:
 
 
 def _smoke(directory: Path) -> int:
+    env = dict(os.environ)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     try:
         result = subprocess.run(
             self_command("--smoke-proxy", str(directory)),
             timeout=150,
             cwd=str(paths.resource_dir()),
             creationflags=procs.CREATE_NO_WINDOW,
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

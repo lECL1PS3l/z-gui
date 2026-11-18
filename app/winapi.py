@@ -72,11 +72,14 @@ def spawn_detached(command: list[str], cwd: str | None = None) -> None:
     import subprocess
 
     flags = 0x00000008 if os.name == "nt" else 0
+    env = dict(os.environ)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
         command,
         cwd=cwd,
         creationflags=flags,
         close_fds=True,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

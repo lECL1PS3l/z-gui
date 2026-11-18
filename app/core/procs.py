@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,4 +83,51 @@ def kill_winws(timeout: float = 8.0) -> int:
             killed += 1
         except psutil.Error:
             pass
+    return killed
+
+
+def _norm(path: str | None) -> str:
+    if not path:
+        return ""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def foreign_winws(our_exe: Path) -> int:
+    import psutil
+
+    target = _norm(str(our_exe))
+    killed = 0
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            if (proc.info.get("name") or "").lower() != "winws.exe":
+                continue
+            exe = _norm(proc.info.get("exe"))
+            if not exe or exe == target:
+                continue
+            proc.kill()
+            killed += 1
+        except psutil.Error:
+            continue
+    return killed
+
+
+def foreign_apps(our_exe: Path) -> int:
+    import psutil
+
+    target = _norm(str(our_exe))
+    current = os.getpid()
+    killed = 0
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            if int(proc.info.get("pid") or 0) == current:
+                continue
+            if (proc.info.get("name") or "").lower() != "z-gui.exe":
+                continue
+            exe = _norm(proc.info.get("exe"))
+            if not exe or exe == target:
+                continue
+            proc.kill()
+            killed += 1
+        except psutil.Error:
+            continue
     return killed

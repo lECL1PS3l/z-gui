@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import __version__, command, ipc, paths, winapi
-from .core import autostart, bootstrap, diagnostics, reconcile, updater, versions
+from .core import autostart, bootstrap, diagnostics, procs, reconcile, updater, versions
 from .core import bridge as bridge_mod
 from .core.state import StateStore
 from .core.zapret import Zapret, ZapretError
@@ -54,6 +55,11 @@ class TrayApp:
 
     def _init(self) -> None:
         try:
+            procs.foreign_apps(Path(sys.executable))
+            procs.foreign_winws(paths.zapret_dir() / "bin" / "winws.exe")
+        except Exception as exc:
+            log.warning("очистка процессов: %s", exc)
+        try:
             data = bootstrap.ensure_ready()
         except Exception as exc:
             log.warning("подготовка не удалась: %s", exc)
@@ -72,6 +78,16 @@ class TrayApp:
             except Exception:
                 log.warning("мост не запустился")
         threading.Thread(target=self._scheduler, name="zgui-scheduler", daemon=True).start()
+        threading.Thread(target=self._guard, name="zgui-guard", daemon=True).start()
+
+    def _guard(self) -> None:
+        while not self._stop.is_set():
+            try:
+                procs.foreign_apps(Path(sys.executable))
+                procs.foreign_winws(paths.zapret_dir() / "bin" / "winws.exe")
+            except Exception:
+                pass
+            self._stop.wait(30)
 
     def _async(self, function) -> dict:
         threading.Thread(target=function, daemon=True).start()
